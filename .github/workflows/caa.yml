@@ -1,0 +1,119 @@
+# Contributor Assignment Agreement gate.
+#
+# Every mas-bandwidth library calls this workflow from its own cla.yml. It
+# holds a pull request until its author has signed the CAA, and records the
+# signature in one org-wide ledger, so a person signs once and it counts in
+# every repository.
+#
+# A contributor signs by posting this exact sentence, on its own, as a comment
+# on their pull request:
+#
+#   I have read the CAA and I hereby sign it, assigning copyright in my
+#   contributions to Más Bandwidth LLC.
+#
+# The ledger is signatures/caa.json on the cla-signatures branch of this
+# repository. Writing it needs CAA_LEDGER_TOKEN, a fine-grained PAT whose only
+# permission is contents read and write on mas-bandwidth/.github. Every other
+# call uses the calling repository's GITHUB_TOKEN, which needs no more than
+# pull-requests write, statuses write, and contents read.
+#
+# Branch protection watches a commit status named by status-context, default
+# `caa`. The status is set on every run of this workflow, whatever the verdict,
+# so a gated pull request always has one. The status is separate from the
+# Actions check this job reports, which a reusable workflow necessarily names
+# after the caller's job.
+#
+# The logic is tools/caa in this repository. Run its tests with `go test ./...`.
+
+name: Contributor Assignment Agreement
+
+on:
+  workflow_call:
+    inputs:
+      sentence:
+        description: The exact sentence a comment must be to count as a signature.
+        type: string
+        required: false
+        default: 'I have read the CAA and I hereby sign it, assigning copyright in my contributions to Más Bandwidth LLC.'
+      allowlist:
+        description: Comma separated logins that never need to sign. Bot accounts are always exempt.
+        type: string
+        required: false
+        default: gafferongames,rowan-claude
+      status-context:
+        description: Name of the commit status this workflow sets, and so the name branch protection uses.
+        type: string
+        required: false
+        default: caa
+      document-url:
+        description: The agreement a contributor is asked to read.
+        type: string
+        required: false
+        default: https://github.com/mas-bandwidth/.github/blob/main/CAA.md
+      ledger-repository:
+        description: Repository holding the signature ledger.
+        type: string
+        required: false
+        default: mas-bandwidth/.github
+      ledger-branch:
+        description: Branch holding the signature ledger.
+        type: string
+        required: false
+        default: cla-signatures
+      ledger-path:
+        description: Path to the signature ledger within its branch.
+        type: string
+        required: false
+        default: signatures/caa.json
+    secrets:
+      CAA_LEDGER_TOKEN:
+        description: Fine-grained PAT with contents read and write on the ledger repository, and nothing else.
+        required: true
+
+jobs:
+  caa:
+    # A comment on a plain issue is not a pull request and has no commit to
+    # gate. Those runs stop here rather than starting a runner.
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    steps:
+      # This repository, at the commit of the workflow file being called, so
+      # the program that runs is the program this file was reviewed with. The
+      # pull request's own head is never checked out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: mas-bandwidth/.github
+          ref: ${{ github.job_workflow_sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26'
+          cache: false
+
+      # Everything reaches the program through the environment. No value out of
+      # an event payload is ever interpolated into a command line.
+      - name: Gate on the CAA
+        env:
+          CAA_EVENT_NAME: ${{ github.event_name }}
+          CAA_EVENT_PATH: ${{ github.event_path }}
+          CAA_REPOSITORY: ${{ github.repository }}
+          CAA_API_URL: ${{ github.api_url }}
+          CAA_SERVER_URL: ${{ github.server_url }}
+          CAA_RUN_ID: ${{ github.run_id }}
+          CAA_GITHUB_TOKEN: ${{ github.token }}
+          CAA_LEDGER_TOKEN: ${{ secrets.CAA_LEDGER_TOKEN }}
+          CAA_SENTENCE: ${{ inputs.sentence }}
+          CAA_ALLOWLIST: ${{ inputs.allowlist }}
+          CAA_STATUS_CONTEXT: ${{ inputs.status-context }}
+          CAA_DOCUMENT_URL: ${{ inputs.document-url }}
+          CAA_LEDGER_REPOSITORY: ${{ inputs.ledger-repository }}
+          CAA_LEDGER_BRANCH: ${{ inputs.ledger-branch }}
+          CAA_LEDGER_PATH: ${{ inputs.ledger-path }}
+        run: go run ./tools/caa
